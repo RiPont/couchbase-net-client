@@ -2,127 +2,99 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Couchbase.Core.Diagnostics.Tracing;
+using Couchbase.Core.Diagnostics.Tracing.Activities;
 using Couchbase.Utils;
 using Newtonsoft.Json;
-using OpenTracing.Tag;
+using OpenTelemetry.Trace.Export;
+////using OpenTracing.Tag;
 
 namespace Couchbase.Core.Diagnostics.Tracing
 {
     internal class SpanSummary : IComparable<SpanSummary>
     {
+        private const long TicksPerMicrosecond = TimeSpan.TicksPerMillisecond / 1000;
+
         [JsonIgnore]
         public string ServiceType { get; set; }
 
-        [JsonProperty("operation_name")]
+        [JsonProperty(CouchbaseTags.Summary.OperationName)]
         public string OperationName { get; set; }
 
-        [JsonProperty("last_operaion_id", NullValueHandling = NullValueHandling.Ignore)]
+        [JsonProperty(CouchbaseTags.Summary.LastOperationId, NullValueHandling = NullValueHandling.Ignore)]
         public string LastOperationId { get; set; }
 
-        [JsonProperty("last_local_address", NullValueHandling = NullValueHandling.Ignore)]
+        [JsonProperty(CouchbaseTags.Summary.LastLocalAddress, NullValueHandling = NullValueHandling.Ignore)]
         public string LastLocalAddress { get; set; }
 
-        [JsonProperty("last_remote_address", NullValueHandling = NullValueHandling.Ignore)]
+        [JsonProperty(CouchbaseTags.Summary.LastRemoteAddress, NullValueHandling = NullValueHandling.Ignore)]
         public string LastRemoteAddress { get; set; }
 
-        [JsonProperty("last_local_id", NullValueHandling = NullValueHandling.Ignore)]
+        [JsonProperty(CouchbaseTags.Summary.LastLocalId, NullValueHandling = NullValueHandling.Ignore)]
         public string LastLocalId { get; set; }
 
-        [JsonProperty("last_dispatch_us", DefaultValueHandling = DefaultValueHandling.Ignore)]
+        [JsonProperty(CouchbaseTags.Summary.LastDispatchUs, DefaultValueHandling = DefaultValueHandling.Ignore)]
         public long LastDispatchDuration { get; set; }
 
-        [JsonProperty("total_us")]
+        [JsonProperty(CouchbaseTags.Summary.TotalDurationUs)]
         public long TotalDuration { get; set; }
 
-        [JsonProperty("encode_us", NullValueHandling = NullValueHandling.Ignore)]
+        [JsonProperty(CouchbaseTags.Summary.EncodingDurationUs, NullValueHandling = NullValueHandling.Ignore)]
         public long EncodingDuration { get; set; }
 
-        [JsonProperty("dispatch_us", NullValueHandling = NullValueHandling.Ignore)]
+        [JsonProperty(CouchbaseTags.Summary.DispatchDurationUs, NullValueHandling = NullValueHandling.Ignore)]
         public long DispatchDuration { get; set; }
 
-        [JsonProperty("server_us", NullValueHandling = NullValueHandling.Ignore)]
+        [JsonProperty(CouchbaseTags.Summary.ServerDurationUs, NullValueHandling = NullValueHandling.Ignore)]
         public long? ServerDuration { get; set; }
 
-        [JsonProperty("decode_us", NullValueHandling = NullValueHandling.Ignore)]
-        public long DecodingDuration { get; set; }
+        [JsonProperty(CouchbaseTags.Summary.DecodingDurationUs, NullValueHandling = NullValueHandling.Ignore)]
+        public long? DecodingDuration { get; set; }
 
         internal SpanSummary()
         {
 
         }
 
-        internal SpanSummary(Span span)
+        internal SpanSummary(System.Diagnostics.Activity activity, Durations durations)
         {
-            ServiceType = span.Tags.TryGetValue(CouchbaseTags.Service, out var serviceName)
-                ? (string) serviceName
-                : string.Empty;
-            OperationName = span.OperationName;
-            TotalDuration = span.Duration;
-            TrySetOpeationId(span);
-            PopulateSummary(span.Spans);
-        }
+            TotalDuration = activity.Duration.ToMicroseconds();
+            OperationName = activity.OperationName;
+            EncodingDuration = durations.EncodingDurationUs;
+            DecodingDuration = durations.DecodingDurationUs;
+            ServerDuration = durations.ServerDurationUs;
+            DispatchDuration = durations.DispatchDurationUs;
 
-        private void PopulateSummary(IEnumerable<Span> spans)
-        {
-            foreach (var span in spans.ToList())
+            string lastDispatchDuration = null;
+            foreach (var tag in activity.Tags)
             {
-                TrySetOpeationId(span);
-
-                switch (span.OperationName)
+                switch (tag.Key)
                 {
-                    case CouchbaseOperationNames.RequestEncoding:
-                        EncodingDuration += span.Duration;
+                    case CouchbaseTags.Summary.LastDispatchUs:
+                        lastDispatchDuration = tag.Value;
                         break;
-                    case CouchbaseOperationNames.DispatchToServer:
-                        DispatchDuration += span.Duration;
-                        LastDispatchDuration = span.Duration;
-
-                        if (span.Tags.TryGetValue(CouchbaseTags.LocalAddress, out var local))
-                        {
-                            LastLocalAddress = local.ToString();
-                        }
-
-                        if (span.Tags.TryGetValue(Tags.PeerHostIpv4.Key, out var remote))
-                        {
-                            LastRemoteAddress = remote.ToString();
-                        }
-
-                        if (span.Tags.TryGetValue(CouchbaseTags.LocalId, out var localId))
-                        {
-                            LastLocalId = localId.ToString();
-                        }
-
-                        if (span.Tags.TryGetValue(CouchbaseTags.PeerLatency, out var duration))
-                        {
-                            if (TimeSpanExtensions.TryConvertToMicros(duration, out var value))
-                            {
-                                if (ServerDuration.HasValue)
-                                {
-                                    ServerDuration += value;
-                                }
-                                else
-                                {
-                                    ServerDuration = value;
-                                }
-                            }
-                        }
+                    case CouchbaseTags.Summary.LastLocalAddress:
+                        LastLocalAddress = tag.Value;
                         break;
-                    case CouchbaseOperationNames.ResponseDecoding:
-                        DecodingDuration += span.Duration;
+                    case CouchbaseTags.Summary.LastLocalId:
+                        LastLocalId = tag.Value;
+                        break;
+                    case CouchbaseTags.Summary.LastOperationId:
+                        LastOperationId = tag.Value;
+                        break;
+                    case CouchbaseTags.Summary.LastRemoteAddress:
+                        LastRemoteAddress = tag.Value;
                         break;
                 }
-
-                PopulateSummary(span.Spans);
             }
-        }
 
-        private void TrySetOpeationId(Span span)
-        {
-            if (span.Tags.TryGetValue(CouchbaseTags.OperationId, out var id))
+            // if we found a LastDispatchDuration, only then try and parse it.
+            if (lastDispatchDuration != null && long.TryParse(lastDispatchDuration, out long lastDispatchDurationUs))
             {
-                LastOperationId = id.ToString();
+                LastDispatchDuration = lastDispatchDurationUs;
             }
         }
+
+        private long PreciseTimestampsToMicroseconds(DateTimeOffset startTimestamp, DateTimeOffset endTimestamp) => throw new NotImplementedException();
 
         public int CompareTo(SpanSummary other)
         {

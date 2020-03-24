@@ -35,13 +35,13 @@ namespace Couchbase.Views
         /// <param name="statusCode">HTTP status code returned with result.</param>
         /// <param name="message">Message about result.</param>
         /// <param name="responseStream"><see cref="Stream"/> to read.</param>
-        /// <param name="decodeSpan">Span to complete once decoding is done.</param>
-        protected ViewResultBase(HttpStatusCode statusCode, string message, Stream responseStream,
-            ISpan? decodeSpan = null)
+        /////// <param name="decodeSpan">Span to complete once decoding is done.</param>
+        protected ViewResultBase(HttpStatusCode statusCode, string message, Stream responseStream) ////,
+            ////ISpan? decodeSpan = null)
             : this(statusCode, message)
         {
             ResponseStream = responseStream ?? throw new ArgumentNullException(nameof(responseStream));
-            DecodeSpan = decodeSpan;
+            ////DecodeSpan = decodeSpan;
         }
 
         /// <inheritdoc />
@@ -52,7 +52,7 @@ namespace Couchbase.Views
         /// </summary>
         protected Stream? ResponseStream { get; }
 
-        protected ISpan? DecodeSpan { get; }
+        ////protected ISpan? DecodeSpan { get; }
         public HttpStatusCode StatusCode { get; }
         public string Message { get; }
 

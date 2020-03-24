@@ -20,6 +20,33 @@ namespace Couchbase.Core.Diagnostics.Tracing
 
         public const string LocalAddress = "local.address";
         public const string PeerLatency = "peer.latency";
+        public const string IsOverThreshold = "couchbase.is_over_threshold";
+
+        // These do not yet seem to be defined as constant in OpenTelemetry alpha, so we define them here.
+        internal static class OpenTelemetry
+        {
+            public const string Component = "component";
+            public const string DbType = "db.type";
+            public const string DbStatement = "db.statement";
+            public const string PeerHostIpv4 = "peer.ipv4";
+            public const string SpanKind = "span.kind";
+            public const string SpanKindClient = "client";
+        }
+
+        internal static class Summary
+        {
+            public const string OperationName = "operation_name";
+            public const string LastOperationId = "last_operation_id";
+            public const string LastLocalAddress = "last_local_address";
+            public const string LastRemoteAddress = "last_remote_address";
+            public const string LastLocalId = "last_local_id";
+            public const string LastDispatchUs = "last_dispatch_us";
+            public const string TotalDurationUs = "total_us";
+            public const string EncodingDurationUs = "encode_us";
+            public const string DispatchDurationUs = "dispatch_us";
+            public const string ServerDurationUs = "server_us";
+            public const string DecodingDurationUs = "decode_us";
+        }
     }
 }
 

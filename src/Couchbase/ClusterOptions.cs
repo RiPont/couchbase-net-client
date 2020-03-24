@@ -10,7 +10,7 @@ using Couchbase.Core.IO.Transcoders;
 using Couchbase.Core.Logging;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using OpenTracing;
+////using OpenTracing;
 
 // ReSharper disable UnusedMember.Global
 
@@ -193,7 +193,7 @@ namespace Couchbase
         public bool? EnableTls { get; set; }
 
         public bool EnableMutationTokens { get; set; } = true;
-        public ITracer Tracer = new ThresholdLoggingTracer();
+        ////internal ThresholdLoggingTracer Tracer = new ThresholdLoggingTracer();
         public TimeSpan TcpKeepAliveTime { get; set; } = TimeSpan.FromMinutes(1);
         public TimeSpan TcpKeepAliveInterval { get; set; } = TimeSpan.FromSeconds(1);
         public bool ForceIPv4 { get; set; }

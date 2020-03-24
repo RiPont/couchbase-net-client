@@ -6,6 +6,8 @@ using System.Net.Http;
 using System.Threading.Tasks;
 using Couchbase.Core;
 using Couchbase.Core.Configuration.Server;
+using Couchbase.Core.Diagnostics.Tracing;
+using Couchbase.Core.Diagnostics.Tracing.Activities;
 using Couchbase.Core.Exceptions;
 using Couchbase.Core.Exceptions.Query;
 using Couchbase.Core.IO.HTTP;
@@ -31,6 +33,9 @@ namespace Couchbase.Query
         private readonly ILogger<QueryClient> _logger;
         internal bool EnhancedPreparedStatementsEnabled;
 
+        // TODO: use DI
+        private readonly ThresholdLoggingTracer _tracer = new ThresholdLoggingTracer(maxSamples: 10);
+
         public QueryClient(
             CouchbaseHttpClient httpClient,
             IServiceUriProvider serviceUriProvider,
@@ -54,85 +59,112 @@ namespace Couchbase.Query
         /// <inheritdoc />
         public async Task<IQueryResult<T>> QueryAsync<T>(string statement, QueryOptions options)
         {
-            if (string.IsNullOrEmpty(options.CurrentContextId))
+            using (var rootSpan = _tracer.StartRootQuerySpan(options))
             {
-                options.ClientContextId(Guid.NewGuid().ToString());
-            }
-
-            // does this query use a prepared plan?
-            if (options.IsAdHoc)
-            {
-                // don't use prepared plan, execute query directly
-                options.Statement(statement);
-                return await ExecuteQuery<T>(options, options.Serializer ?? _serializer).ConfigureAwait(false);
-            }
-
-            // try find cached query plan
-            if (_queryCache.TryGetValue(statement, out var queryPlan))
-            {
-                // if an upgrade has happened, don't use query plans that have an encoded plan
-                if (!EnhancedPreparedStatementsEnabled || string.IsNullOrWhiteSpace(queryPlan.EncodedPlan))
+                if (string.IsNullOrEmpty(options.CurrentContextId))
                 {
-                    // plan is valid, execute query with it
-                    options.Prepared(queryPlan, statement);
-                    return await ExecuteQuery<T>(options, options.Serializer ?? _serializer).ConfigureAwait(false);
+                    options.ClientContextId(Guid.NewGuid().ToString());
                 }
 
-                // entry is stale, remove from cache
-                _queryCache.TryRemove(statement, out _);
-            }
-
-            // create prepared statement
-            var prepareStatement = statement;
-            if (!prepareStatement.StartsWith("PREPARE ", StringComparison.InvariantCultureIgnoreCase))
-            {
-                prepareStatement = $"PREPARE {statement}";
-            }
-
-            // set prepared statement
-            options.Statement(prepareStatement);
-
-            // server supports combined prepare & execute
-            if (EnhancedPreparedStatementsEnabled)
-            {
-                // execute combined prepare & execute query
-                options.AutoExecute(true);
-                var result = await ExecuteQuery<T>(options, options.Serializer ?? _serializer).ConfigureAwait(false);
-
-                // add/replace query plan name in query cache
-                if (result is StreamingQueryResult<T> streamingResult) // NOTE: hack to not make 'PreparedPlanName' property public
+                // does this query use a prepared plan?
+                if (options.IsAdHoc)
                 {
-                    var plan = new QueryPlan {Name = streamingResult.PreparedPlanName, Text = statement};
-                    _queryCache.AddOrUpdate(statement, plan, (k, p) => plan);
+                    // don't use prepared plan, execute query directly
+                    options.Statement(statement);
+                    return await ExecuteQuery<T>(options, options.Serializer ?? _serializer, rootSpan).ConfigureAwait(false);
                 }
 
-                return result;
+                // try find cached query plan
+                if (_queryCache.TryGetValue(statement, out var queryPlan))
+                {
+                    // if an upgrade has happened, don't use query plans that have an encoded plan
+                    if (!EnhancedPreparedStatementsEnabled || string.IsNullOrWhiteSpace(queryPlan.EncodedPlan))
+                    {
+                        // plan is valid, execute query with it
+                        options.Prepared(queryPlan, statement);
+                        return await ExecuteQuery<T>(options, options.Serializer ?? _serializer, rootSpan).ConfigureAwait(false);
+                    }
+
+                    // entry is stale, remove from cache
+                    _queryCache.TryRemove(statement, out _);
+                }
+
+                // TODO:  As metioned in the RFC for SDK3 Response Time Observability, we can't track a span for response_decoding because
+                //        the change to ContentAs means we have no control over when and if the response is actually read.  However, that
+                //        also means we can't use the old method of recording for SetPeerLatencyTag and the N1QL Profiling Baggage.
+
+                // TODO:  Should we add spans for preparing statements separately, with request_encoding and server_dispatch as child spans?
+                //        Currently, this will appear as one "n1ql" operation with multiple request_encoding and server_dispatch when doing
+                //        prepare-and-execute.
+                // create prepared statement
+                var prepareStatement = statement;
+                if (!prepareStatement.StartsWith("PREPARE ", StringComparison.InvariantCultureIgnoreCase))
+                {
+                    prepareStatement = $"PREPARE {statement}";
+                }
+
+                // set prepared statement
+                options.Statement(prepareStatement);
+
+                // server supports combined prepare & execute
+                if (EnhancedPreparedStatementsEnabled)
+                {
+                    // execute combined prepare & execute query
+                    options.AutoExecute(true);
+                    IQueryResult<T> result;
+                    using (var prepareAndExecuteSpan = rootSpan.StartChild(CouchbaseOperationNames.PrepareAndExecute))
+                    {
+                        result = await ExecuteQuery<T>(options, options.Serializer ?? _serializer, prepareAndExecuteSpan).ConfigureAwait(false);
+                    }
+
+                    // add/replace query plan name in query cache
+                    if (result is StreamingQueryResult<T> streamingResult) // NOTE: hack to not make 'PreparedPlanName' property public
+                    {
+                        var plan = new QueryPlan { Name = streamingResult.PreparedPlanName, Text = statement };
+                        _queryCache.AddOrUpdate(statement, plan, (k, p) => plan);
+                    }
+
+                    return result;
+                }
+
+                // older style, prepare then execute
+                IQueryResult<QueryPlan> preparedResult;
+                using (var prepareSpan = rootSpan.StartChild(CouchbaseOperationNames.Prepare))
+                {
+                    preparedResult = await ExecuteQuery<QueryPlan>(options, _queryPlanSerializer, rootSpan).ConfigureAwait(false);
+                    queryPlan = await preparedResult.FirstAsync().ConfigureAwait(false);
+                }
+
+                // add plan to cache and execute
+                _queryCache.TryAdd(statement, queryPlan);
+                options.Prepared(queryPlan, statement);
+
+                // execute query using plan
+                return await ExecuteQuery<T>(options, options.Serializer ?? _serializer, rootSpan).ConfigureAwait(false);
             }
-
-            // older style, prepare then execute
-            var preparedResult = await ExecuteQuery<QueryPlan>(options, _queryPlanSerializer).ConfigureAwait(false);
-            queryPlan = await preparedResult.FirstAsync().ConfigureAwait(false);
-
-            // add plan to cache and execute
-            _queryCache.TryAdd(statement, queryPlan);
-            options.Prepared(queryPlan, statement);
-
-            // execute query using plan
-            return await ExecuteQuery<T>(options, options.Serializer ?? _serializer).ConfigureAwait(false);
         }
 
-        private async Task<IQueryResult<T>> ExecuteQuery<T>(QueryOptions options, ITypeSerializer serializer)
+        private async Task<IQueryResult<T>> ExecuteQuery<T>(QueryOptions options, ITypeSerializer serializer, ActivitySpan rootSpan)
         {
             // try get Query node
             var queryUri = _serviceUriProvider.GetRandomQueryUri();
-            var body = options.GetFormValuesAsJson();
+            string body;
+            using (rootSpan.StartChild(CouchbaseOperationNames.RequestEncoding))
+            {
+                body = options.GetFormValuesAsJson();
+            }
 
             QueryResultBase<T> queryResult;
             using (var content = new StringContent(body, System.Text.Encoding.UTF8, MediaType.Json))
             {
                 try
                 {
-                    var response = await HttpClient.PostAsync(queryUri, content, options.Token).ConfigureAwait(false);
+                    HttpResponseMessage response;
+                    using (rootSpan.StartChild(CouchbaseOperationNames.DispatchToServer))
+                    {
+                        response = await HttpClient.PostAsync(queryUri, content, options.Token).ConfigureAwait(false);
+                    }
+
                     var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
 
                     if (serializer is IStreamingTypeDeserializer streamingDeserializer)

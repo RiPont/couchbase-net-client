@@ -5,35 +5,27 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Couchbase.Utils;
+using Couchbase.Core.Diagnostics.Tracing.Activities;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using OpenTracing;
-using OpenTracing.Mock;
-using OpenTracing.Propagation;
-using OpenTracing.Util;
+using System.Diagnostics;
+using Couchbase.Query;
 
 namespace Couchbase.Core.Diagnostics.Tracing
 {
-    public class ThresholdLoggingTracer : ITracer, IDisposable
+    public class ThresholdLoggingTracer : IDisposable
     {
+        public const string DiagnosticListenerName = "Couchbase.Core.Tracing.Operations";
+
         private const int WorkerSleep = 100;
-      //  private static readonly ILog Log = LogManager.GetLogger<ThresholdLoggingTracer>();
+        //  private static readonly ILog Log = LogManager.GetLogger<ThresholdLoggingTracer>();
 
         private readonly CancellationTokenSource _source = new CancellationTokenSource();
         private readonly BlockingCollection<SpanSummary> _queue = new BlockingCollection<SpanSummary>(1000);
-        private readonly SortedSet<SpanSummary> _kvSummaries = new SortedSet<SpanSummary>();
-        private readonly SortedSet<SpanSummary> _viewSummaries = new SortedSet<SpanSummary>();
-        private readonly SortedSet<SpanSummary> _querySummaries = new SortedSet<SpanSummary>();
-        private readonly SortedSet<SpanSummary> _searchSummaries = new SortedSet<SpanSummary>();
-        private readonly SortedSet<SpanSummary> _analyticsSummaries = new SortedSet<SpanSummary>();
+        private readonly DiagnosticListener _diagnosticSource = new DiagnosticListener(DiagnosticListenerName);
+        private readonly List<OverThresholdObserver> _overThresholdObservers;
 
         private DateTime _lastrun = DateTime.UtcNow;
-        private int _kvSummaryCount;
-        private int _viewSummaryCount;
-        private int _querySummaryCount;
-        private int _searchSummaryCount;
-        private int _analyticsSummaryCount;
-        private bool _hasSummariesToLog;
 
         /// <summary>
         /// Gets or sets the interval at which the <see cref="ThresholdLoggingTracer"/> writes to the log.
@@ -72,68 +64,57 @@ namespace Couchbase.Core.Diagnostics.Tracing
         /// </summary>
         public int AnalyticsThreshold { get; set; } = 1000000;
 
-        /// <summary>
-        /// Internal total count of all pending spans that have exceed the given service thresholds.
-        /// </summary>
-        internal int TotalSummaryCount => _kvSummaryCount + _viewSummaryCount + _querySummaryCount + _searchSummaryCount + _analyticsSummaryCount;
+        /////// <summary>
+        /////// Internal total count of all pending spans that have exceed the given service thresholds.
+        /////// </summary>
+        ////internal int TotalSummaryCount => _kvSummaryCount + _viewSummaryCount + _querySummaryCount + _searchSummaryCount + _analyticsSummaryCount;
 
-        public IScopeManager ScopeManager { get; } = new AsyncLocalScopeManager();
-
-        public ISpan ActiveSpan => ScopeManager?.Active?.Span;
-
-        public ThresholdLoggingTracer()
+        public ThresholdLoggingTracer(int maxSamples)
         {
+            SampleSize = maxSamples;
+            var observedServices = new[]
+            {
+                CouchbaseTags.ServiceKv,
+                CouchbaseTags.ServiceView,
+                CouchbaseTags.ServiceQuery,
+                CouchbaseTags.ServiceSearch,
+                CouchbaseTags.ServiceAnalytics,
+            };
+
+            _overThresholdObservers = observedServices.Select(s => new OverThresholdObserver(s, maxSamples)).ToList();
+
             Task.Factory.StartNew(DoWork, TaskCreationOptions.LongRunning);
         }
 
-        public ISpanBuilder BuildSpan(string operationName)
+
+        internal ActivitySpan StartRootSpan(string operationName, string operationId, long? thresholdUs = null)
         {
-            return new SpanBuilder(this, operationName);
+            var activity = new Activity(operationName).AddDefaultTags();
+            var newSpan = new ActivitySpan(activity, _diagnosticSource, new Durations(), thresholdUs);
+            _diagnosticSource.StartActivity(activity, null);
+            return newSpan;
+        }
+        
+        internal ActivitySpan StartRootQuerySpan(QueryOptions queryOptions)
+        {
+            var span = this.StartRootSpan("n1ql", queryOptions.CurrentContextId, 0) //// N1qlThreshold)
+                           .AddTag(CouchbaseTags.OperationId, queryOptions.CurrentContextId)
+                           .AddTag(CouchbaseTags.Service, CouchbaseTags.ServiceQuery)
+                           .AddTag(CouchbaseTags.OpenTelemetry.DbStatement, queryOptions.StatementValue);
+            return span;
         }
 
-        public void Inject<TCarrier>(ISpanContext spanContext, IFormat<TCarrier> format, TCarrier carrier)
+        private void CheckAndReport()
         {
-            throw new NotSupportedException();
-        }
-
-        public ISpanContext Extract<TCarrier>(IFormat<TCarrier> format, TCarrier carrier)
-        {
-            throw new NotSupportedException();
-        }
-
-        internal void ReportSpan(Span span)
-        {
-            if (span.IsRootSpan && !span.ContainsIgnore)
-            {
-                var summary = new SpanSummary(span);
-                if (IsOverThreshold(summary))
-                {
-                    _queue.Add(summary);
-                }
-            }
-        }
-
-        private bool IsOverThreshold(SpanSummary summary)
-        {
-            switch (summary.ServiceType)
-            {
-                case CouchbaseTags.ServiceKv:
-                    return summary.TotalDuration > KvThreshold;
-                case CouchbaseTags.ServiceView:
-                    return summary.TotalDuration > ViewThreshold;
-                case CouchbaseTags.ServiceQuery:
-                    return summary.TotalDuration > N1qlThreshold;
-                case CouchbaseTags.ServiceSearch:
-                    return summary.TotalDuration > SearchThreshold;
-                case CouchbaseTags.ServiceAnalytics:
-                    return summary.TotalDuration > AnalyticsThreshold;
-                default:
-                    return false;
-            }
+            var reports = _overThresholdObservers.Select(observer => observer.GetAndClearSamples())
+                                                 .Where(summaryReport => summaryReport.Count > 0);
+            var allReports = new JArray(reports.Select(r => JObject.FromObject(r)));
+            _diagnosticSource.Write(TraceEventNames.OperationsOverThreshold, allReports);
         }
 
         private async Task DoWork()
         {
+            // TODO:  Use a timer instead?  Was that already investigated and ruled out?
             while (!_source.Token.IsCancellationRequested)
             {
                 try
@@ -141,53 +122,23 @@ namespace Couchbase.Core.Diagnostics.Tracing
                     // determine if we need to write to log yet
                     if (DateTime.UtcNow.Subtract(_lastrun) > TimeSpan.FromMilliseconds(Interval))
                     {
-                        if (_hasSummariesToLog)
-                        {
-                            var result = new JArray();
-                            AddSummariesToResult(result, CouchbaseTags.ServiceKv, _kvSummaries, ref _kvSummaryCount);
-                            AddSummariesToResult(result, CouchbaseTags.ServiceView, _viewSummaries, ref _viewSummaryCount);
-                            AddSummariesToResult(result, CouchbaseTags.ServiceQuery, _querySummaries, ref _querySummaryCount);
-                            AddSummariesToResult(result, CouchbaseTags.ServiceSearch, _searchSummaries, ref _searchSummaryCount);
-                            AddSummariesToResult(result, CouchbaseTags.ServiceAnalytics, _analyticsSummaries, ref _analyticsSummaryCount);
+                        ////if (_hasSummariesToLog)
+                        ////{
+                        ////    var result = new JArray();
+                        ////    AddSummariesToResult(result, CouchbaseTags.ServiceKv, _kvSummaries, ref _kvSummaryCount);
+                        ////    AddSummariesToResult(result, CouchbaseTags.ServiceView, _viewSummaries, ref _viewSummaryCount);
+                        ////    AddSummariesToResult(result, CouchbaseTags.ServiceQuery, _querySummaries, ref _querySummaryCount);
+                        ////    AddSummariesToResult(result, CouchbaseTags.ServiceSearch, _searchSummaries, ref _searchSummaryCount);
+                        ////    AddSummariesToResult(result, CouchbaseTags.ServiceAnalytics, _analyticsSummaries, ref _analyticsSummaryCount);
 
-                            //Log.Info("Operations that exceeded service threshold: {0}", result.ToString(Formatting.None));
+                        ////    //Log.Info("Operations that exceeded service threshold: {0}", result.ToString(Formatting.None));
 
-                            _hasSummariesToLog = false;
-                        }
+                        ////    _hasSummariesToLog = false;
+                        ////}
+
+                        CheckAndReport();
 
                         _lastrun = DateTime.UtcNow;
-                    }
-
-                    while (_queue.TryTake(out var summary, WorkerSleep, _source.Token))
-                    {
-                        if (_source.IsCancellationRequested)
-                        {
-                            break;
-                        }
-
-                        switch (summary.ServiceType)
-                        {
-                            case CouchbaseTags.ServiceKv:
-                                AddSummryToSet(_kvSummaries, summary, ref _kvSummaryCount, SampleSize);
-                                break;
-                            case CouchbaseTags.ServiceView:
-                                AddSummryToSet(_viewSummaries, summary, ref _viewSummaryCount, SampleSize);
-                                break;
-                            case CouchbaseTags.ServiceQuery:
-                                AddSummryToSet(_querySummaries, summary, ref _querySummaryCount, SampleSize);
-                                break;
-                            case CouchbaseTags.ServiceSearch:
-                                AddSummryToSet(_searchSummaries, summary, ref _searchSummaryCount, SampleSize);
-                                break;
-                            case CouchbaseTags.ServiceAnalytics:
-                                AddSummryToSet(_analyticsSummaries, summary, ref _analyticsSummaryCount, SampleSize);
-                                break;
-                            default:
-                              //  Log.Info($"Unknown service type {summary.ServiceType}");
-                                break;
-                        }
-
-                        _hasSummariesToLog = true; // indicates we have something to process
                     }
 
                     // sleep for a little while
@@ -197,7 +148,7 @@ namespace Couchbase.Core.Diagnostics.Tracing
                 catch (OperationCanceledException) { } // ignore
                 catch (Exception)
                 {
-                   // Log.Error("Error when procesing spans for spans over serivce thresholds", exception);
+                    // Log.Error("Error when procesing spans for spans over serivce thresholds", exception);
                 }
 
                 await Task.Delay(TimeSpan.FromMilliseconds(WorkerSleep), _source.Token).ConfigureAwait(false);
