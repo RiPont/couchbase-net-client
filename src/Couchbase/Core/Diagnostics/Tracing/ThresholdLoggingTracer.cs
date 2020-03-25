@@ -23,7 +23,6 @@ namespace Couchbase.Core.Diagnostics.Tracing
         //  private static readonly ILog Log = LogManager.GetLogger<ThresholdLoggingTracer>();
 
         private readonly CancellationTokenSource _source = new CancellationTokenSource();
-        private readonly BlockingCollection<SpanSummary> _queue = new BlockingCollection<SpanSummary>(1000);
         private readonly DiagnosticListener _diagnosticSource = new DiagnosticListener(DiagnosticListenerName);
         private readonly List<OverThresholdObserver> _overThresholdObservers;
         private readonly List<IDisposable> _overThresholdSubscriptions;
@@ -67,11 +66,6 @@ namespace Couchbase.Core.Diagnostics.Tracing
         /// Gets or sets the analytics operation threshold, expressed in microseconds.
         /// </summary>
         public int AnalyticsThreshold { get; set; } = 1000000;
-
-        /////// <summary>
-        /////// Internal total count of all pending spans that have exceed the given service thresholds.
-        /////// </summary>
-        ////internal int TotalSummaryCount => _kvSummaryCount + _viewSummaryCount + _querySummaryCount + _searchSummaryCount + _analyticsSummaryCount;
 
         public ThresholdLoggingTracer(ILogger<ThresholdLoggingTracer> logger)
         {
@@ -135,20 +129,6 @@ namespace Couchbase.Core.Diagnostics.Tracing
                     // determine if we need to write to log yet
                     if (DateTime.UtcNow.Subtract(_lastrun) > TimeSpan.FromMilliseconds(Interval))
                     {
-                        ////if (_hasSummariesToLog)
-                        ////{
-                        ////    var result = new JArray();
-                        ////    AddSummariesToResult(result, CouchbaseTags.ServiceKv, _kvSummaries, ref _kvSummaryCount);
-                        ////    AddSummariesToResult(result, CouchbaseTags.ServiceView, _viewSummaries, ref _viewSummaryCount);
-                        ////    AddSummariesToResult(result, CouchbaseTags.ServiceQuery, _querySummaries, ref _querySummaryCount);
-                        ////    AddSummariesToResult(result, CouchbaseTags.ServiceSearch, _searchSummaries, ref _searchSummaryCount);
-                        ////    AddSummariesToResult(result, CouchbaseTags.ServiceAnalytics, _analyticsSummaries, ref _analyticsSummaryCount);
-
-                        ////    //Log.Info("Operations that exceeded service threshold: {0}", result.ToString(Formatting.None));
-
-                        ////    _hasSummariesToLog = false;
-                        ////}
-
                         CheckAndReport();
 
                         _lastrun = DateTime.UtcNow;
@@ -159,56 +139,18 @@ namespace Couchbase.Core.Diagnostics.Tracing
                 }
                 catch (ObjectDisposedException) { } // ignore
                 catch (OperationCanceledException) { } // ignore
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    // Log.Error("Error when procesing spans for spans over serivce thresholds", exception);
+                    _logger.LogError(ex, "Error when procesing spans for spans over serivce thresholds");
                 }
 
                 await Task.Delay(TimeSpan.FromMilliseconds(WorkerSleep), _source.Token).ConfigureAwait(false);
             }
         }
 
-        private static void AddSummariesToResult(JArray result, string serviceName, ICollection<SpanSummary> summaries, ref int summaryCount)
-        {
-            if (summaries.Any())
-            {
-                result.Add(new JObject
-                {
-                    {"service", serviceName},
-                    {"count", summaryCount},
-                    {"top", JArray.FromObject(summaries)}
-                });
-            }
-
-            summaries.Clear();
-            summaryCount = 0;
-        }
-
-        private static void AddSummryToSet(ICollection<SpanSummary> summaries, SpanSummary summary, ref int summaryCount, int maxSampleSize)
-        {
-            summaries.Add(summary);
-            summaryCount += 1;
-
-            while (summaries.Count > maxSampleSize)
-            {
-                summaries.Remove(summaries.First());
-            }
-        }
-
         public void Dispose()
         {
             _source?.Cancel();
-
-            if (_queue != null)
-            {
-                _queue.CompleteAdding();
-                while (_queue.Any())
-                {
-                    _queue.TryTake(out _);
-                }
-
-                _queue.Dispose();
-            }
 
             foreach (var subscription in _overThresholdSubscriptions)
             {
