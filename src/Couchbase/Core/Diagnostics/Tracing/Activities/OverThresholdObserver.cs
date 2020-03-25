@@ -34,7 +34,7 @@ namespace Couchbase.Core.Diagnostics.Tracing.Activities
                 return;
             }
 
-            if (value.Key == CouchbaseTags.IsOverThreshold
+            if (value.Key == TraceEventNames.IsOverThreshold
                 && value.Value is SpanSummary spanSummary
                 && spanSummary.ServiceType == _serviceName)
             {

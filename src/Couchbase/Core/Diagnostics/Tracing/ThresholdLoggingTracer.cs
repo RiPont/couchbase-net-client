@@ -10,10 +10,12 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Diagnostics;
 using Couchbase.Query;
+using Microsoft.Extensions.Logging;
+using Couchbase.Core.Logging;
 
 namespace Couchbase.Core.Diagnostics.Tracing
 {
-    public class ThresholdLoggingTracer : IDisposable
+    internal class ThresholdLoggingTracer : IActivityTracer, IDisposable
     {
         public const string DiagnosticListenerName = "Couchbase.Core.Tracing.Operations";
 
@@ -24,6 +26,8 @@ namespace Couchbase.Core.Diagnostics.Tracing
         private readonly BlockingCollection<SpanSummary> _queue = new BlockingCollection<SpanSummary>(1000);
         private readonly DiagnosticListener _diagnosticSource = new DiagnosticListener(DiagnosticListenerName);
         private readonly List<OverThresholdObserver> _overThresholdObservers;
+        private readonly List<IDisposable> _overThresholdSubscriptions;
+        private readonly ILogger<ThresholdLoggingTracer> _logger;
 
         private DateTime _lastrun = DateTime.UtcNow;
 
@@ -69,9 +73,9 @@ namespace Couchbase.Core.Diagnostics.Tracing
         /////// </summary>
         ////internal int TotalSummaryCount => _kvSummaryCount + _viewSummaryCount + _querySummaryCount + _searchSummaryCount + _analyticsSummaryCount;
 
-        public ThresholdLoggingTracer(int maxSamples)
+        public ThresholdLoggingTracer(ILogger<ThresholdLoggingTracer> logger)
         {
-            SampleSize = maxSamples;
+            _logger = logger;
             var observedServices = new[]
             {
                 CouchbaseTags.ServiceKv,
@@ -81,7 +85,12 @@ namespace Couchbase.Core.Diagnostics.Tracing
                 CouchbaseTags.ServiceAnalytics,
             };
 
-            _overThresholdObservers = observedServices.Select(s => new OverThresholdObserver(s, maxSamples)).ToList();
+            _overThresholdObservers = observedServices.Select(s => new OverThresholdObserver(s, SampleSize)).ToList();
+            _overThresholdSubscriptions = new List<IDisposable>(_overThresholdObservers.Count);
+            foreach (var observer in _overThresholdObservers)
+            {
+                _overThresholdSubscriptions.Add(_diagnosticSource.Subscribe(observer));
+            }
 
             Task.Factory.StartNew(DoWork, TaskCreationOptions.LongRunning);
         }
@@ -91,16 +100,16 @@ namespace Couchbase.Core.Diagnostics.Tracing
         {
             var activity = new Activity(operationName).AddDefaultTags();
             var newSpan = new ActivitySpan(activity, _diagnosticSource, new Durations(), thresholdUs);
-            _diagnosticSource.StartActivity(activity, null);
+            _diagnosticSource.StartActivity(activity, operationId);
             return newSpan;
         }
         
-        internal ActivitySpan StartRootQuerySpan(QueryOptions queryOptions)
+        public ActivitySpan StartRootQuerySpan(string statement, QueryOptions queryOptions)
         {
             var span = this.StartRootSpan("n1ql", queryOptions.CurrentContextId, 0) //// N1qlThreshold)
                            .AddTag(CouchbaseTags.OperationId, queryOptions.CurrentContextId)
                            .AddTag(CouchbaseTags.Service, CouchbaseTags.ServiceQuery)
-                           .AddTag(CouchbaseTags.OpenTelemetry.DbStatement, queryOptions.StatementValue);
+                           .AddTag(CouchbaseTags.OpenTelemetry.DbStatement, statement);
             return span;
         }
 
@@ -109,7 +118,11 @@ namespace Couchbase.Core.Diagnostics.Tracing
             var reports = _overThresholdObservers.Select(observer => observer.GetAndClearSamples())
                                                  .Where(summaryReport => summaryReport.Count > 0);
             var allReports = new JArray(reports.Select(r => JObject.FromObject(r)));
-            _diagnosticSource.Write(TraceEventNames.OperationsOverThreshold, allReports);
+            if (allReports.Count > 0)
+            {
+                _diagnosticSource.Write(TraceEventNames.OperationsOverThreshold, allReports);
+                _logger.LogInformation(LoggingEvents.OperationsOverThreshold, allReports.ToString());
+            }
         }
 
         private async Task DoWork()
@@ -195,6 +208,11 @@ namespace Couchbase.Core.Diagnostics.Tracing
                 }
 
                 _queue.Dispose();
+            }
+
+            foreach (var subscription in _overThresholdSubscriptions)
+            {
+                subscription.Dispose();
             }
         }
     }

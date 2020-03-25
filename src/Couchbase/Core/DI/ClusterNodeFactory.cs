@@ -45,6 +45,8 @@ namespace Couchbase.Core.DI
         {
             var ipEndPoint = await _ipEndPointService.GetIpEndPointAsync(endPoint.Host, endPoint.Port.GetValueOrDefault(), cancellationToken).ConfigureAwait(false);
 
+            // TODO: handle null ipEndPoint here (DNS lookup returned nothing), otherwise the NullReferenceException the client gets is misleading
+
             var clusterNode = new ClusterNode(_clusterContext, _connectionPoolFactory, _logger,
                 _transcoder, _circuitBreaker, _saslMechanismFactory, _redactor, ipEndPoint)
             {

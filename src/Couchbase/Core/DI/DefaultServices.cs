@@ -44,6 +44,7 @@ namespace Couchbase.Core.DI
             yield return (typeof(ILoggerFactory), new SingletonServiceFactory(new NullLoggerFactory()));
             yield return (typeof(ILogger<>), new SingletonGenericServiceFactory(typeof(Logger<>)));
             yield return (typeof(IRedactor), new SingletonServiceFactory(typeof(Redactor)));
+            yield return (typeof(IActivityTracer), new SingletonServiceFactory(typeof(ThresholdLoggingTracer)));
 
             yield return (typeof(ILookupClient), new TransientServiceFactory(_ => new LookupClient()));
             yield return (typeof(IDnsResolver), new SingletonServiceFactory(serviceProvider =>

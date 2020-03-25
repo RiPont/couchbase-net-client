@@ -31,21 +31,21 @@ namespace Couchbase.Query
         private readonly IServiceUriProvider _serviceUriProvider;
         private readonly ITypeSerializer _serializer;
         private readonly ILogger<QueryClient> _logger;
+        private readonly IActivityTracer _tracer;
         internal bool EnhancedPreparedStatementsEnabled;
-
-        // TODO: use DI
-        private readonly ThresholdLoggingTracer _tracer = new ThresholdLoggingTracer(maxSamples: 10);
 
         public QueryClient(
             CouchbaseHttpClient httpClient,
             IServiceUriProvider serviceUriProvider,
             ITypeSerializer serializer,
-            ILogger<QueryClient> logger)
+            ILogger<QueryClient> logger,
+            IActivityTracer tracer)
             : base(httpClient)
         {
             _serviceUriProvider = serviceUriProvider ?? throw new ArgumentNullException(nameof(serviceUriProvider));
             _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _tracer = tracer ?? throw new ArgumentNullException(nameof(tracer));
         }
 
         /// <inheritdoc />
@@ -59,13 +59,13 @@ namespace Couchbase.Query
         /// <inheritdoc />
         public async Task<IQueryResult<T>> QueryAsync<T>(string statement, QueryOptions options)
         {
-            using (var rootSpan = _tracer.StartRootQuerySpan(options))
+            if (string.IsNullOrEmpty(options.CurrentContextId))
             {
-                if (string.IsNullOrEmpty(options.CurrentContextId))
-                {
-                    options.ClientContextId(Guid.NewGuid().ToString());
-                }
+                options.ClientContextId(Guid.NewGuid().ToString());
+            }
 
+            using (var rootSpan = _tracer.StartRootQuerySpan(statement, options))
+            {
                 // does this query use a prepared plan?
                 if (options.IsAdHoc)
                 {

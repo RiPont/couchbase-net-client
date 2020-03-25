@@ -43,10 +43,10 @@ namespace Couchbase.Core.Diagnostics.Tracing.Activities
             }
 
             // if we are a root activity and over-threshold, then report it
-            if (_thresholdUs != null) //// && _activity.Duration.ToMicroseconds() > _thresholdUs)
+            if (_thresholdUs != null && _activity.Duration.ToMicroseconds() > _thresholdUs)
             {
-                _activity.AddTag(TraceEventNames.IsOverThreshold, true);
-                if (_diagSource.IsEnabled(CouchbaseTags.IsOverThreshold))
+                _activity.AddTag(CouchbaseTags.IsOverThreshold, true);
+                if (_diagSource.IsEnabled(TraceEventNames.IsOverThreshold))
                 {
                     var spanSummary = new SpanSummary(_activity, _durations);
                     _diagSource.Write(TraceEventNames.IsOverThreshold, spanSummary);
@@ -107,9 +107,10 @@ namespace Couchbase.Core.Diagnostics.Tracing.Activities
 
         internal ActivitySpan StartChild(string operationName)
         {
-            Activity childActivity = new Activity(operationName);
+            var childActivity = new Activity(operationName);
+            //// childActivity.SetParentId(_activity.TraceId, _activity.SpanId);
             ActivitySpan childSpan = new ActivitySpan(childActivity, _diagSource, _durations);
-            _diagSource.StartActivity(childActivity, null);
+            _diagSource.StartActivity(childActivity, _activity);
             return childSpan;
         }
 

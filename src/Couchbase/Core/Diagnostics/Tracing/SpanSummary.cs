@@ -84,6 +84,9 @@ namespace Couchbase.Core.Diagnostics.Tracing
                     case CouchbaseTags.Summary.LastRemoteAddress:
                         LastRemoteAddress = tag.Value;
                         break;
+                    case CouchbaseTags.Service:
+                        ServiceType = tag.Value;
+                        break;
                 }
             }
 
