@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using Couchbase.Core.CircuitBreakers;
 using Couchbase.Core.Configuration.Server;
 using Couchbase.Core.DI;
+using Couchbase.Core.Exceptions.KeyValue;
 using Couchbase.Core.IO;
 using Couchbase.Core.IO.Authentication;
 using Couchbase.Core.IO.Connections;
@@ -423,17 +424,35 @@ namespace Couchbase.Core
                 }
                 else if (status != ResponseStatus.Success)
                 {
+                    //sub-doc path failures are handled when the ContentAs() method is called.
+                    //so we simply return back to the caller and let it be handled later.
+                    if (status == ResponseStatus.SubDocMultiPathFailure)
+                    {
+                        return;
+                    }
+
                     var code = (short) status;
                     if (!ErrorMap.TryGetGetErrorCode(code, out var errorCode))
                     {
                         _logger.LogWarning("Unexpected Status for KeyValue operation not found in Error Map: 0x{code}", code.ToString("X4"));
                     }
 
-                    throw status.CreateException(errorCode);
+                    //Contextual error information
+                    var ctx = new KeyValueErrorContext
+                    {
+                        BucketName = Owner?.Name,
+                        ClientContextId = op.Opaque.ToString(),
+                        DocumentKey = op.Key,
+                        Cas = op.Cas,
+                        CollectionName = op.CName,
+                        ScopeName = op.SName,
+                        Message = errorCode?.ToString()
+                    };
+                    throw status.CreateException(ctx);
                 }
 
                 _logger.LogDebug("Completed executing op {opCode} with key {key} and opaque {opaque}", op.OpCode,
-                   _redactor.UserData(op.Key),
+                    _redactor.UserData(op.Key),
                     op.Opaque);
             }
             catch (OperationCanceledException e)
