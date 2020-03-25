@@ -1,40 +1,61 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
+using Couchbase.Extensions.Tracing.OpenTelemetry;
+using Couchbase.KeyValue;
+using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using OpenTelemetry.Trace.Configuration;
+using OpenTelemetry.Trace.Export;
 
 namespace Couchbase.SDK3._0.Examples
 {
     internal class Program
     {
-        private static void Main(string[] args)
+        private static async Task Main(string[] args)
         {
-            Task.Run(async () =>
+            try
             {
-                try
-                {
-                    var cluster = new Cluster();
-                    var task = cluster.Initialize(
-                        new Configuration()
-                            .WithServers("couchbase://127.0.0.1")
-                            .WithBucket("default")
-                            .WithCredentials("Administrator", "password")
-                    );
-                    task.ConfigureAwait(false);
-                    task.Wait();
+                var loggerFactory = new LoggerFactory()
+                    .AddConsole();
 
-                    var bucket = await cluster.Bucket("default");
-                    var collection = await bucket.DefaultCollection;
-
-                    await BasicCrud(collection);
-                    await BasicProjection(collection);
-                    await BasicDurability(collection);
-                    await BasicQuery(cluster);
-                }
-                catch (Exception e)
+                var tracerFactory = TracerFactory.Create(builder =>
                 {
-                    Console.WriteLine(e);
+                    builder.AddCouchbaseCollector(new CouchbaseCollectorOptions() { Verbose = true })
+                           .AddProcessorPipeline(b => b.SetExporter(new SimpleConsoleExporter()));
+                });
+
+                var clusterOptions = new ClusterOptions()
+                {
+                    UserName = "Administrator",
+                    Password = "password"
+                };
+
+                clusterOptions.WithConnectionString("couchbase://127.0.0.1")
+                              .WithLogging(loggerFactory);
+
+                var cluster = await Cluster.ConnectAsync(clusterOptions);
+
+                var bucket = await cluster.BucketAsync("beer-sample");
+                var collection = bucket.DefaultCollection();
+
+                await BasicCrud(collection);
+                await BasicProjection(collection);
+                await BasicQuery(cluster);
+
+                ////await BasicDurability(collection);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+                if (Debugger.IsAttached)
+                {
+                    throw;
                 }
-            });
+            }
 
             Console.WriteLine("Hello World!");
             Console.Read();
@@ -42,85 +63,94 @@ namespace Couchbase.SDK3._0.Examples
 
         private static async Task BasicQuery(ICluster cluster)
         {
-            var statement = "SELECT * FROM `default` WHERE type=$type";
+            var statement = "SELECT * FROM `beer-sample` WHERE type='brewery'";
 
-            var results = await cluster.Query<Person>(
+            // TODO:  Using type parameter Brewery here doesn't seem to populate correctly.  Why?
+            //        Using the WebUI, the results are returned as "beer-sample" roots.  Maybe that's it.
+            var results = await cluster.QueryAsync<JObject>(
                 statement,
-                parameters => parameters.Add("type", "person"),
-                options => options.Timeout(new TimeSpan(0, 0, 0, 75)));
+                options => options.Timeout(TimeSpan.FromSeconds(70)));
 
-            foreach (var result in results) Console.WriteLine(result);
+            var asyncEnumerator = results.GetAsyncEnumerator();
+            while (await asyncEnumerator.MoveNextAsync())
+            {
+                var result = asyncEnumerator.Current.ToString(Formatting.None);
+                ////Console.WriteLine(result);
+            }
         }
 
-        private static async Task BasicCrud(ICollection collection)
+        private static async Task BasicCrud(ICouchbaseCollection collection)
         {
-            var id = "p01";
+            var id = "brewery01";
 
             //upsert a new person
-            var result = await collection.Upsert(id, new Person
+            var result = await collection.UpsertAsync(id, new Brewery()
             {
-                name = "Joan Deere",
-                age = 28,
-                animals = new List<string> {"kitty", "puppy"},
-                attributes = new Attributes
-                {
-                    dimensions = new Dimensions
-                    {
-                        height = 65,
-                        weight = 120
-                    },
-                    hair = "brown",
-                    hobbies = new List<Hobby>
-                    {
-                        new Hobby
-                        {
-                            name = "Curling",
-                            type = "winter",
-                            details = new Details
-                            {
-                                location = new Location
-                                {
-                                    @long = -121.886330,
-                                    lat = 37.338207
-                                }
-                            }
-                        }
-                    }
-                }
-            }, options => options.Expiration = new TimeSpan(1, 0, 0, 0));
+                address = new[] { "123 Main Street"},
+                city = "Sometown",
+                code = "95123",
+                country = "Old Country",
+                description = "The 01 Brewery is entirely fictional.",
+                geo = new Location { accuracy = "ROOFTOP", lat = 73.7825m, @long = -122.393m },
+                name = "The Oh One Gastropub",
+                phone = "857-4309",
+                state = "Heisenburg",
+                updated = DateTimeOffset.UtcNow,
+                website = new Uri("http://localhost/")
+            }, options => options.Expiry(TimeSpan.FromDays(1)));
 
-            var get = await collection.Get(id,
-                options => options.Timeout = new TimeSpan(0, 0, 0, 10));
+            var get = await collection.GetAsync(id,
+                options => options.Timeout(TimeSpan.FromSeconds(10)));
 
             var person = get.ContentAs<Person>();
             Console.WriteLine(person.name);
         }
 
-        private static async Task BasicDurability(ICollection collection)
+        private static async Task BasicDurability(ICouchbaseCollection collection)
         {
-            var id = "p02";
-            var result = await collection.Insert(id, new Person
+            // TODO: this is throwing "Durability Impossible", and I don't know enough about the feature to
+            //       begin to know why.
+            var id = "another_example_brewery";
+            var result = await collection.InsertAsync(id, new Brewery
             {
-                name = "Jon Henry",
-                age = 34
+                name = "Another Example Brewery",
+                website = new Uri("http://localhost/?id=another_example_brewery")
             }, options =>
             {
-                options.DurabilityLevel = DurabilityLevel.MajorityAndPersistActive;
-                options.Timeout = new TimeSpan(0, 0, 0, 30);
+                options.Durability(DurabilityLevel.MajorityAndPersistToActive);
+                options.Timeout(TimeSpan.FromSeconds(30));
             });
 
             Console.WriteLine(result.Cas);
         }
 
-        private static async Task BasicProjection(ICollection collection)
+        private static async Task BasicProjection(ICouchbaseCollection collection)
         {
-            var id = "p01";
+            var id = "brewery01";
 
-            var result = await collection.Get(id,
-                options => options.Project("name", "age", "attributes.hair"));
+            var result = await collection.GetAsync(id,
+                options => options.Projection("name", "phone", "website", "geo.lat", "geo.long"));
 
-            var person = result.ContentAs<Person>();
-            Console.WriteLine("Age={person.age}, Name={person.name}, Hair{person.attributes.hair}");
+            var brewery = result.ContentAs<Brewery>();
+            Console.WriteLine($"Name={brewery.name}, LatLong={brewery.geo.lat},{brewery.geo.@long}");
+        }
+
+        public class Brewery
+        {
+            public string[] address { get; set; }
+            public string city { get; set; }
+            public string code { get; set; }
+            public string country { get; set; }
+            public string description { get; set; }
+            public Location geo { get; set; }
+            public string name { get; set; }
+            public string phone { get; set; }
+            public string state { get; set; }
+            public string type => "brewery";
+            public DateTimeOffset updated { get; set; }
+            public Uri website { get; set; }
+
+            public override string ToString() => JObject.FromObject(this).ToString(Newtonsoft.Json.Formatting.Indented);
         }
 
         public class Dimensions
@@ -131,8 +161,9 @@ namespace Couchbase.SDK3._0.Examples
 
         public class Location
         {
-            public double lat { get; set; }
-            public double @long { get; set; }
+            public string accuracy { get; set; }
+            public decimal lat { get; set; }
+            public decimal @long { get; set; }
         }
 
         public class Details
@@ -161,6 +192,38 @@ namespace Couchbase.SDK3._0.Examples
             public List<string> animals { get; set; }
             public Attributes attributes { get; set; }
             public string type => "person";
+        }
+
+        private class SimpleConsoleExporter : SpanExporter
+        {
+            private JsonSerializer _spanDataSerializer = new JsonSerializer();
+
+            public SimpleConsoleExporter()
+            {
+                _spanDataSerializer.Converters.Add(new ValueToStringConverter<ActivitySpanId>());
+                _spanDataSerializer.Converters.Add(new ValueToStringConverter<ActivityTraceId>());
+                _spanDataSerializer.Converters.Add(new ValueToStringConverter<ActivityTraceFlags>());
+                _spanDataSerializer.Formatting = Formatting.Indented;
+            }
+
+            public override Task<ExportResult> ExportAsync(IEnumerable<SpanData> batch, CancellationToken cancellationToken)
+            {
+                foreach (var spanData in batch)
+                {
+                    ////Console.Out.WriteLine("OpenTelemetry:" + JObject.FromObject(spanData).ToString(Formatting.Indented));
+                    _spanDataSerializer.Serialize(Console.Out, spanData);
+                }
+
+                return Task.FromResult(ExportResult.Success);
+            }
+
+            public override Task ShutdownAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        }
+
+        private class ValueToStringConverter<T> : JsonConverter<T>
+        {
+            public override T ReadJson(JsonReader reader, Type objectType, T existingValue, bool hasExistingValue, JsonSerializer serializer) => throw new NotImplementedException();
+            public override void WriteJson(JsonWriter writer, T value, JsonSerializer serializer) => writer.WriteValue(value.ToString());
         }
     }
 }
