@@ -1,9 +1,5 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using Couchbase.Core.Diagnostics.Tracing;
 using Couchbase.Core.Diagnostics.Tracing.Activities;
-using Couchbase.Utils;
 using Newtonsoft.Json;
 
 namespace Couchbase.Core.Diagnostics.Tracing

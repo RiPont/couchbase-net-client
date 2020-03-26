@@ -14,10 +14,7 @@ namespace Couchbase.Extensions.Tracing.OpenTelemetry
         /// <returns>The instance of <see cref="TracerBuilder"/> to chain the calls.</returns>
         public static TracerBuilder AddCouchbaseCollector(this TracerBuilder builder, CouchbaseCollectorOptions options = null)
         {
-            if (builder == null)
-            {
-                throw new ArgumentNullException(nameof(builder));
-            }
+            builder = builder ?? throw new ArgumentNullException(nameof(builder));
 
             return builder.AddCollector(t => new CouchbaseCollector(t, options ?? CouchbaseCollectorOptions.Default));
         }

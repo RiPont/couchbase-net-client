@@ -8,7 +8,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Couchbase.Core.Exceptions;
 using Couchbase.Core.IO.Serializers;
-////using OpenTracing;
 
 #nullable enable
 
@@ -46,10 +45,8 @@ namespace Couchbase.Views
         /// <param name="message">Message about result.</param>
         /// <param name="responseStream"><see cref="Stream"/> to read.</param>
         /// <param name="deserializer"><see cref="ITypeSerializer"/> used to deserialize objects.</param>
-        /////// <param name="decodeSpan">Span to complete once decoding is done.</param>
-        public BlockViewResult(HttpStatusCode statusCode, string message, Stream responseStream, ITypeSerializer deserializer) ////,
-            ////ISpan? decodeSpan = null)
-            : base(statusCode, message, responseStream) ////, decodeSpan)
+        public BlockViewResult(HttpStatusCode statusCode, string message, Stream responseStream, ITypeSerializer deserializer)
+            : base(statusCode, message, responseStream)
         {
             _deserializer = deserializer ?? throw new ArgumentNullException(nameof(deserializer));
         }
@@ -82,8 +79,6 @@ namespace Couchbase.Views
             {
                 _rows = Enumerable.Empty<IViewRow<TKey, TValue>>();
             }
-
-            ////DecodeSpan?.Finish();
         }
 
         /// <inheritdoc />

@@ -1,17 +1,14 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Couchbase.Utils;
 using Couchbase.Core.Diagnostics.Tracing.Activities;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-using System.Diagnostics;
+using Couchbase.Core.Logging;
 using Couchbase.Query;
 using Microsoft.Extensions.Logging;
-using Couchbase.Core.Logging;
+using Newtonsoft.Json.Linq;
 
 namespace Couchbase.Core.Diagnostics.Tracing
 {

@@ -1,8 +1,6 @@
-using Couchbase.Utils;
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Text;
+using Couchbase.Utils;
 
 namespace Couchbase.Core.Diagnostics.Tracing.Activities
 {

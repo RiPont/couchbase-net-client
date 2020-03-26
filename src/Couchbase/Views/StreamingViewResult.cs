@@ -38,9 +38,8 @@ namespace Couchbase.Views
             _deserializer = deserializer ?? throw new ArgumentNullException(nameof(deserializer));
         }
 
-        public StreamingViewResult(HttpStatusCode statusCode, string message, Stream responseStream, IStreamingTypeDeserializer deserializer) ////,
-            ////ISpan? decodeSpan = null)
-            : base(statusCode, message, responseStream) ////, decodeSpan)
+        public StreamingViewResult(HttpStatusCode statusCode, string message, Stream responseStream, IStreamingTypeDeserializer deserializer)
+            : base(statusCode, message, responseStream)
         {
             _deserializer = deserializer ?? throw new ArgumentNullException(nameof(deserializer));
         }
@@ -113,9 +112,6 @@ namespace Couchbase.Views
 
             // Read any remaining attributes after the results
             await ReadResponseAttributes(cancellationToken).ConfigureAwait(false);
-
-            // if we have a decode span, finish it
-            ////DecodeSpan?.Finish();
         }
 
         /// <summary>

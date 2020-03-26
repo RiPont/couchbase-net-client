@@ -1,8 +1,6 @@
-using Couchbase.Utils;
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Text;
+using Couchbase.Utils;
 using SummaryTags = Couchbase.Core.Diagnostics.Tracing.CouchbaseTags.Summary;
 
 namespace Couchbase.Core.Diagnostics.Tracing.Activities
