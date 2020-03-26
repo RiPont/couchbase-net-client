@@ -5,6 +5,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Couchbase.Analytics;
 using Couchbase.Core;
+using Couchbase.Core.Diagnostics.Tracing;
+using Couchbase.Core.Diagnostics.Tracing.Activities;
 using Couchbase.Core.IO.HTTP;
 using Couchbase.Core.IO.Serializers;
 using Couchbase.Core.Logging;
@@ -45,9 +47,13 @@ namespace Couchbase.UnitTests.Utils
                 .Setup(m => m.GetRandomQueryUri())
                 .Returns(new Uri("http://localhost:8093"));
 
+            var mockSpan = new Mock<ActivitySpan>();
+            var mockTracer = new Mock<IActivityTracer>(MockBehavior.Strict);
+            mockTracer.Setup(t => t.StartRootQuerySpan(It.IsAny<string>(), It.IsAny<QueryOptions>()))
+                      .Returns(mockSpan.Object);
             var serializer = new DefaultSerializer();
             return new QueryClient(httpClient, mockServiceUriProvider.Object, serializer,
-                new Mock<ILogger<QueryClient>>().Object);
+                new Mock<ILogger<QueryClient>>().Object, mockTracer.Object);
         }
 
         internal static IAnalyticsClient AnalyticsClient([NotNull] Queue<Task<HttpResponseMessage>> responses)

@@ -69,7 +69,10 @@ namespace Couchbase.Core.Diagnostics.Tracing.Activities
                 samplesCountedThisTime = Interlocked.Exchange(ref _samplesCounted, 0);
             }
 
+
             return new SpanSummaryReport(_serviceName, samplesCountedThisTime, results);
         }
+
+        internal long SamplesCounted => Interlocked.Read(ref _samplesCounted);
     }
 }

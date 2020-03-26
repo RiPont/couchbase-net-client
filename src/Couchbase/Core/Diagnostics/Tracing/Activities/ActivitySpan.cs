@@ -15,6 +15,17 @@ namespace Couchbase.Core.Diagnostics.Tracing.Activities
         private readonly long? _thresholdUs;
         private bool hasEnded = false;
 
+        internal string ParentId => _activity.ParentId;
+        internal string ActivityId => _activity.Id;
+
+        // for unit tests
+        internal ActivitySpan()
+        {
+            _activity = new Activity("Operation.Unknown");
+            _diagSource = new DiagnosticListener("Listener.None");
+            _durations = new Durations();
+        }
+
         internal ActivitySpan(Activity activity, DiagnosticSource diagSource, Durations durations, long? thresholdUs = null)
         {
             _activity = activity ?? throw new ArgumentNullException(nameof(activity));

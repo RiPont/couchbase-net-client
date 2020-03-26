@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -9,6 +10,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Couchbase.Core;
 using Couchbase.Core.Configuration.Server;
+using Couchbase.Core.Diagnostics.Tracing;
+using Couchbase.Core.Diagnostics.Tracing.Activities;
 using Couchbase.Core.Exceptions;
 using Couchbase.Core.Exceptions.Query;
 using Couchbase.Core.IO.HTTP;
@@ -21,11 +24,19 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using Moq.Protected;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Couchbase.UnitTests.Query
 {
     public class QueryClientTests
     {
+        private readonly Xunit.Abstractions.ITestOutputHelper _output;
+
+        public QueryClientTests(Xunit.Abstractions.ITestOutputHelper output)
+        {
+            _output = output;
+        }
+
         [Theory]
         [InlineData("query-badrequest-error-response-400.json", HttpStatusCode.BadRequest, typeof(PlanningFailureException))]
         [InlineData("query-n1ql-error-response-400.json", HttpStatusCode.BadRequest, typeof(PlanningFailureException))]
@@ -62,7 +73,7 @@ namespace Couchbase.UnitTests.Query
 
                 var serializer = new DefaultSerializer();
                 var client = new QueryClient(httpClient, mockServiceUriProvider.Object, serializer,
-                    new Mock<ILogger<QueryClient>>().Object);
+                    new Mock<ILogger<QueryClient>>().Object, GetMockTracer());
 
                 try
                 {
@@ -90,10 +101,10 @@ namespace Couchbase.UnitTests.Query
                 "SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>()).ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK,
-                Content = new ByteArrayContent(buffer)
-            });
+                {
+                    StatusCode = HttpStatusCode.OK,
+                    Content = new ByteArrayContent(buffer)
+                });
 
             var httpClient = new CouchbaseHttpClient(handlerMock.Object)
             {
@@ -105,9 +116,9 @@ namespace Couchbase.UnitTests.Query
                 .Setup(m => m.GetRandomQueryUri())
                 .Returns(new Uri("http://localhost:8093"));
 
-            var serializer = (ITypeSerializer) Activator.CreateInstance(serializerType);
+            var serializer = (ITypeSerializer)Activator.CreateInstance(serializerType);
             var client = new QueryClient(httpClient, mockServiceUriProvider.Object, serializer,
-                new Mock<ILogger<QueryClient>>().Object);
+                new Mock<ILogger<QueryClient>>().Object, GetMockTracer());
 
             var result = await client.QueryAsync<dynamic>("SELECT * FROM `default`", new QueryOptions()).ConfigureAwait(false);
 
@@ -141,7 +152,7 @@ namespace Couchbase.UnitTests.Query
             var overrideSerializer = new Mock<ITypeSerializer> {DefaultValue = DefaultValue.Mock};
 
             var client = new QueryClient(httpClient, mockServiceUriProvider.Object, primarySerializer.Object,
-                new Mock<ILogger<QueryClient>>().Object);
+                new Mock<ILogger<QueryClient>>().Object, GetMockTracer());
 
             await client.QueryAsync<object>("SELECT * FROM `default`",
                 new QueryOptions
@@ -171,7 +182,7 @@ namespace Couchbase.UnitTests.Query
                 .Returns(new Uri("http://localhost:8093"));
 
             var client = new QueryClient(httpClient, mockServiceUriProvider.Object, new DefaultSerializer(),
-                new Mock<ILogger<QueryClient>>().Object);
+                new Mock<ILogger<QueryClient>>().Object, GetMockTracer());
 
             Assert.False(client.EnhancedPreparedStatementsEnabled);
         }
@@ -190,7 +201,7 @@ namespace Couchbase.UnitTests.Query
                 .Returns(new Uri("http://localhost:8093"));
 
             var client = new QueryClient(httpClient, mockServiceUriProvider.Object, new DefaultSerializer(),
-                new Mock<ILogger<QueryClient>>().Object);
+                new Mock<ILogger<QueryClient>>().Object, GetMockTracer());
             Assert.False(client.EnhancedPreparedStatementsEnabled);
 
             var clusterCapabilities = new ClusterCapabilities
@@ -206,6 +217,16 @@ namespace Couchbase.UnitTests.Query
 
             client.UpdateClusterCapabilities(clusterCapabilities);
             Assert.True(client.EnhancedPreparedStatementsEnabled);
+        }
+
+        private IActivityTracer GetMockTracer()
+        {
+            var mockSpan = new Mock<ActivitySpan>();
+            var mockTracer = new Mock<IActivityTracer>(MockBehavior.Strict);
+            mockTracer.Setup(t => t.StartRootQuerySpan(It.IsAny<string>(), It.IsAny<QueryOptions>()))
+                      .Returns(mockSpan.Object);
+
+            return mockTracer.Object;
         }
     }
 }

@@ -20,7 +20,6 @@ namespace Couchbase.Core.Diagnostics.Tracing
         public const string DiagnosticListenerName = "Couchbase.Core.Tracing.Operations";
 
         private const int WorkerSleep = 100;
-        //  private static readonly ILog Log = LogManager.GetLogger<ThresholdLoggingTracer>();
 
         private readonly CancellationTokenSource _source = new CancellationTokenSource();
         private readonly DiagnosticListener _diagnosticSource = new DiagnosticListener(DiagnosticListenerName);
@@ -67,6 +66,12 @@ namespace Couchbase.Core.Diagnostics.Tracing
         /// </summary>
         public int AnalyticsThreshold { get; set; } = 1000000;
 
+        /// <summary>
+        /// Internal total count of all pending spans that have exceed the given service thresholds.
+        /// </summary>
+        internal long TotalSummaryCount => _overThresholdObservers.Sum(observer => observer.SamplesCounted);
+
+
         public ThresholdLoggingTracer(ILogger<ThresholdLoggingTracer> logger)
         {
             _logger = logger;
@@ -100,7 +105,7 @@ namespace Couchbase.Core.Diagnostics.Tracing
         
         public ActivitySpan StartRootQuerySpan(string statement, QueryOptions queryOptions)
         {
-            var span = this.StartRootSpan("n1ql", queryOptions.CurrentContextId, 0) //// N1qlThreshold)
+            var span = this.StartRootSpan("n1ql", queryOptions.CurrentContextId, N1qlThreshold)
                            .AddTag(CouchbaseTags.OperationId, queryOptions.CurrentContextId)
                            .AddTag(CouchbaseTags.Service, CouchbaseTags.ServiceQuery)
                            .AddTag(CouchbaseTags.OpenTelemetry.DbStatement, statement);

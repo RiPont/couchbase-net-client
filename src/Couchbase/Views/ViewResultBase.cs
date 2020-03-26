@@ -5,7 +5,6 @@ using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using Couchbase.Core.Retry;
-using OpenTracing;
 
 #nullable enable
 

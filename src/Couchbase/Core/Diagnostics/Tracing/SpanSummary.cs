@@ -5,8 +5,6 @@ using Couchbase.Core.Diagnostics.Tracing;
 using Couchbase.Core.Diagnostics.Tracing.Activities;
 using Couchbase.Utils;
 using Newtonsoft.Json;
-using OpenTelemetry.Trace.Export;
-////using OpenTracing.Tag;
 
 namespace Couchbase.Core.Diagnostics.Tracing
 {
