@@ -50,34 +50,42 @@ namespace Couchbase.UnitTests.Core.Diagnostics
         public async Task Query_span_triggers_threshold_appropriately()
         {
             var mockLogger = new Mock<ILogger<ThresholdLoggingTracer>>();
-            var tracer = new ThresholdLoggingTracer(mockLogger.Object)
+            using (var tracerNoTrigger = new ThresholdLoggingTracer(mockLogger.Object)
             {
-                N1qlThreshold = 1000000,
+                N1qlThreshold = 100000000,
                 Interval = 1000
-            };
-
-            using (var querySpanShort = tracer.StartRootQuerySpan("SHORT QUERY TEST", new QueryOptions()))
-            using (var childSpanShort = querySpanShort.StartChild("fictitious_child_operation"))
+            })
             {
-                // no wait, shouldn't trigger
-            }
+                using (var querySpanShort = tracerNoTrigger.StartRootQuerySpan("SHORT QUERY TEST", new QueryOptions()))
+                using (var childSpanShort = querySpanShort.StartChild("fictitious_child_operation"))
+                {
+                    // no wait, shouldn't trigger
+                }
 
-            // wait well past the reporting interval
-            await Task.Delay(1000);
-
-            Assert.Equal(0, tracer.TotalSummaryCount);
-
-            using (var querySpanLong = tracer.StartRootQuerySpan("LONG QUERY TEST", new QueryOptions()))
-            using (var childSpanLong = querySpanLong.StartChild("fictitious_child_operation"))
-            {
-                // task takes way longer than the threshold of 1000us
+                // wait well past the reporting interval
                 await Task.Delay(2000);
+
+                Assert.Equal(0, tracerNoTrigger.TotalSummaryCount);
             }
 
-            // wait well past the reporting interval
-            await Task.Delay(1000);
+            using (var tracerQuickTrigger = new ThresholdLoggingTracer(mockLogger.Object)
+            {
+                N1qlThreshold = 0,
+                Interval = 1000
+            })
+            {
+                using (var querySpanLong = tracerQuickTrigger.StartRootQuerySpan("LONG QUERY TEST", new QueryOptions()))
+                using (var childSpanLong = querySpanLong.StartChild("fictitious_child_operation"))
+                {
+                    // task takes way longer than the threshold
+                    await Task.Delay(100);
+                }
 
-            Assert.Equal(0, tracer.TotalSummaryCount);
+                // wait well past the reporting interval
+                await Task.Delay(2000);
+
+                Assert.Equal(0, tracerQuickTrigger.TotalSummaryCount);
+            }
         }
 
         [Fact]
