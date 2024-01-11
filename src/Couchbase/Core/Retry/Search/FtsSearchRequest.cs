@@ -6,7 +6,7 @@ using Newtonsoft.Json;
 
 namespace Couchbase.Core.Retry.Search
 {
-    internal class SearchRequest : RequestBase
+    internal class FtsSearchRequest : RequestBase
     {
         public override bool Idempotent => true;
         public string Index { get; set; }

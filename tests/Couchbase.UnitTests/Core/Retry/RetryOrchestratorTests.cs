@@ -373,7 +373,7 @@ namespace Couchbase.UnitTests.Core.Retry
             using var cts = new CancellationTokenSource();
             cts.CancelAfter(1000);
 
-            var searchRequest = new SearchRequest
+            var searchRequest = new FtsSearchRequest
             {
                 Token = cts.Token,
                 Timeout = TimeSpan.FromMilliseconds(1000),

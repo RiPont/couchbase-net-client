@@ -407,7 +407,7 @@ namespace Couchbase
 
             ThrowIfNotBootstrapped();
 
-            var searchRequest = new SearchRequest
+            var searchRequest = new FtsSearchRequest
             {
                 Index = indexName,
                 Query = query,
@@ -427,6 +427,8 @@ namespace Couchbase
             return await _retryOrchestrator.RetryAsync(Func, searchRequest).ConfigureAwait(false);
         }
 
+        public Task<ISearchResult> SearchAsync(string searchIndexName, SearchRequest searchRequest, CancellationToken cancellationToken) =>
+            throw new NotImplementedException();
         #endregion
 
         #region Management

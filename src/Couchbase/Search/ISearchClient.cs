@@ -21,7 +21,7 @@ namespace Couchbase.Search
         /// Executes a <see cref="ISearchQuery"/> request including any <see cref="SearchOptions"/> parameters asynchronously.
         /// </summary>
         /// <returns></returns>
-        Task<ISearchResult> QueryAsync(SearchRequest searchRequest, CancellationToken cancellationToken = default);
+        Task<ISearchResult> QueryAsync(FtsSearchRequest ftsSearchRequest, CancellationToken cancellationToken);
     }
 }
 

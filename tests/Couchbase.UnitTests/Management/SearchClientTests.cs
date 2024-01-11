@@ -53,7 +53,7 @@ namespace Couchbase.UnitTests.Management
             var client = new SearchClient(httpClientFactory, mockServiceUriProvider.Object,
                 new Mock<ILogger<SearchClient>>().Object, NoopRequestTracer.Instance);
 
-            await client.QueryAsync(new SearchRequest{Index = indexName, Options = new SearchOptions()}).ConfigureAwait(false);
+            await client.QueryAsync(new FtsSearchRequest{Index = indexName, Options = new SearchOptions()}).ConfigureAwait(false);
         }
     }
 }
